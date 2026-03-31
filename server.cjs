@@ -1,0 +1,1 @@
+//izmeniti sve
