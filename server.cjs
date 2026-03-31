@@ -1,53 +1,30 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
+const { createClient } = require('@supabase/supabase-js');
 const {
     Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
     AlignmentType, BorderStyle, WidthType, VerticalAlign, ShadingType
 } = require('docx');
 
 const app = express();
-app.use(cors());
+
+app.use(cors({
+    origin: true,
+    credentials: true
+}));
 app.use(express.json());
 
+// ── Supabase ──────────────────────────────────────────────────
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_KEY
+);
+
 app.get("/", (req, res) => {
-    res.json({
-        status: "Backend radi",
-        endpoints: [
-            "/login",
-            "/my/:type/:email",
-            "/submit/:type",
-            "/admin/users",
-            "/admin/submission/:type/:email",
-            "/generate/:type",
-            "/generate-all/:type"
-        ]
-    });
+    res.json({ status: "Backend radi sa Supabase bazom" });
 });
 
-const KORISNICI_PATH = path.join(__dirname, "korisnici.json");
-const PLANOVI_PATH = path.join(__dirname, 'planovi.json');
-const IZVESTAJI_PATH = path.join(__dirname, 'izvestaji.json');
-
-function loadKorisnici() { return JSON.parse(fs.readFileSync(KORISNICI_PATH, 'utf8')); }
-function load(p) { if (!fs.existsSync(p)) return {}; return JSON.parse(fs.readFileSync(p, 'utf8')); }
-function save(p, d) { fs.writeFileSync(p, JSON.stringify(d, null, 2)); }
-
-function checkMasterKey(req, res) {
-    const key = req.headers['x-master-key'];
-    const expected = process.env.MASTER_KEY;
-    if (!expected) {
-        res.status(500).json({ error: "MASTER_KEY nije konfigurisan na serveru." });
-        return false;
-    }
-    if (!key || key !== expected) {
-        res.status(403).json({ error: "Погрешан мастер кључ." });
-        return false;
-    }
-    return true;
-}
-
+// ── Helpers ───────────────────────────────────────────────────
 function toCyrillic(text) {
     if (!text) return text;
     const digraphs = [
@@ -76,6 +53,7 @@ function toCyrillic(text) {
     return result;
 }
 
+// ── DOCX helpers ──────────────────────────────────────────────
 const TNR = "Times New Roman";
 const LANG = { id: "sr-Cyrl-RS" };
 const border = { style: BorderStyle.SINGLE, size: 4, color: "000000" };
@@ -151,7 +129,6 @@ function buildIzvestajChildren(ime, outside, inside) {
     const ow = [3539, 1559, 1985, 1979];
     const iw = [2200, 2000, 2000, 1800, 1062];
     const imeCyr = toCyrillic(ime);
-
     return [
         centeredBold("ИЗВЕШТАЈ О СТРУЧНОМ УСАВРШАВАЊУ ЗА 2024/2025. ГОДИНУ", 28, false, { after: 200 }),
         normalPara([
@@ -163,22 +140,8 @@ function buildIzvestajChildren(ime, outside, inside) {
         new Table({
             width: { size: ow.reduce((a, b) => a + b, 0), type: WidthType.DXA }, columnWidths: ow,
             rows: [
-                new TableRow({
-                    children: [
-                        headerCell("Назив акредитованог семинара - програма", ow[0]),
-                        headerCell("Каталошки број", ow[1]),
-                        headerCell("Број бодова/сати", ow[2]),
-                        headerCell("Компетенције", ow[3])
-                    ]
-                }),
-                ...outside.map(r => new TableRow({
-                    children: [
-                        cell(r.naziv, ow[0]),
-                        cell(r.kataloski, ow[1]),
-                        cell(r.bodovi, ow[2]),
-                        cell(r.kompetencije, ow[3])
-                    ]
-                }))
+                new TableRow({ children: [headerCell("Назив акредитованог семинара - програма", ow[0]), headerCell("Каталошки број", ow[1]), headerCell("Број бодова/сати", ow[2]), headerCell("Компетенције", ow[3])] }),
+                ...outside.map(r => new TableRow({ children: [cell(r.naziv, ow[0]), cell(r.kataloski, ow[1]), cell(r.bodovi, ow[2]), cell(r.kompetencije, ow[3])] }))
             ]
         }),
         normalPara([
@@ -190,27 +153,10 @@ function buildIzvestajChildren(ime, outside, inside) {
         centeredBold("АКТИВНОСТИ СТРУЧНОГ УСАВРШАВАЊА", 24, false, { after: 0 }),
         centeredBold("У УСТАНОВИ", 24, true, { after: 120 }),
         new Table({
-            width: { size: iw.reduce((a, b) => a + b, 0), type: WidthType.DXA },
-            columnWidths: iw,
+            width: { size: iw.reduce((a, b) => a + b, 0), type: WidthType.DXA }, columnWidths: iw,
             rows: [
-                new TableRow({
-                    children: [
-                        headerCell("Активност", iw[0]),
-                        headerCell("Назив", iw[1]),
-                        headerCell("Начин учествовања", iw[2]),
-                        headerCell("Датум реализације", iw[3]),
-                        headerCell("Број бодова", iw[4])
-                    ]
-                }),
-                ...inside.map(r => new TableRow({
-                    children: [
-                        cell(r.aktivnost, iw[0]),
-                        cell(r.naziv, iw[1]),
-                        cell(r.nacin, iw[2]),
-                        cell(r.datum, iw[3]),
-                        cell(r.bodovi, iw[4])
-                    ]
-                }))
+                new TableRow({ children: [headerCell("Активност", iw[0]), headerCell("Назив", iw[1]), headerCell("Начин учествовања", iw[2]), headerCell("Датум реализације", iw[3]), headerCell("Број бодова", iw[4])] }),
+                ...inside.map(r => new TableRow({ children: [cell(r.aktivnost, iw[0]), cell(r.naziv, iw[1]), cell(r.nacin, iw[2]), cell(r.datum, iw[3]), cell(r.bodovi, iw[4])] }))
             ]
         }),
         normalPara([
@@ -238,101 +184,134 @@ async function buildCombined(type, entries) {
 
 // ── ROUTES ────────────────────────────────────────────────────
 
-// Login — now returns super_admin too
-app.post('/login', (req, res) => {
+// Login
+app.post('/login', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Email je obavezan" });
-    const k = loadKorisnici().find(k => k.email.toLowerCase() === email.toLowerCase().trim());
-    if (!k) return res.status(401).json({ error: "Email nije pronađen" });
-    res.json({
-        ime: k.ime,
-        email: k.email,
-        admin: k.admin || false,
-        super_admin: k.super_admin || false
-    });
+
+    const { data, error } = await supabase
+        .from('korisnici')
+        .select('*')
+        .ilike('email', email.trim())
+        .single();
+
+    if (error || !data) return res.status(401).json({ error: "Email nije pronađen" });
+
+    res.json({ ime: data.ime, email: data.email, admin: data.admin || false });
 });
 
-// Load previously saved data for a user (used by Form on mount)
-app.get('/my/:type/:email', (req, res) => {
-    const file = req.params.type === 'izvestaj' ? IZVESTAJI_PATH : PLANOVI_PATH;
-    const sub = load(file)[req.params.email];
-    if (!sub) return res.status(404).json({ error: "Нема сачуваних података" });
-    res.json(sub);
-});
-
-// Save/update a submission
-app.post('/submit/:type', (req, res) => {
+// Sacuvaj plan ili izvestaj
+app.post('/submit/:type', async (req, res) => {
     const { email, ime, outside, inside } = req.body;
     if (!email) return res.status(400).json({ error: "Email je obavezan" });
-    const file = req.params.type === 'izvestaj' ? IZVESTAJI_PATH : PLANOVI_PATH;
-    const data = load(file);
-    data[email] = { ime, outside, inside, submittedAt: new Date().toISOString() };
-    save(file, data);
+
+    const table = req.params.type === 'izvestaj' ? 'izvestaji' : 'planovi';
+
+    const { error } = await supabase
+        .from(table)
+        .upsert({
+            email,
+            ime,
+            outside,
+            inside,
+            submitted_at: new Date().toISOString()
+        }, { onConflict: 'email' });
+
+    if (error) {
+        console.error("Supabase upsert error:", error);
+        return res.status(500).json({ error: "Greška pri čuvanju" });
+    }
+
     res.json({ success: true });
 });
 
-// Admin: list all users with submission status (admins included)
-app.get('/admin/users', (req, res) => {
-    const planovi = load(PLANOVI_PATH);
-    const izvestaji = load(IZVESTAJI_PATH);
-    res.json(loadKorisnici().map(k => ({
+// Ucitaj sacuvani plan/izvestaj za korisnika
+app.get('/my/:type/:email', async (req, res) => {
+    const table = req.params.type === 'izvestaj' ? 'izvestaji' : 'planovi';
+
+    const { data, error } = await supabase
+        .from(table)
+        .select('*')
+        .eq('email', req.params.email)
+        .single();
+
+    if (error || !data) return res.status(404).json({ error: "Nema sačuvanih podataka" });
+
+    res.json(data);
+});
+
+// Admin — lista svih korisnika sa statusom
+app.get('/admin/users', async (req, res) => {
+    const { data: korisnici, error } = await supabase.from('korisnici').select('*');
+    if (error) return res.status(500).json({ error: "Greška" });
+
+    const { data: planovi } = await supabase.from('planovi').select('email, submitted_at');
+    const { data: izvestaji } = await supabase.from('izvestaji').select('email, submitted_at');
+
+    const planoviMap = Object.fromEntries((planovi || []).map(p => [p.email, p.submitted_at]));
+    const izvestajiMap = Object.fromEntries((izvestaji || []).map(i => [i.email, i.submitted_at]));
+
+    res.json(korisnici.map(k => ({
         email: k.email,
         ime: k.ime,
         admin: k.admin || false,
-        super_admin: k.super_admin || false,
-        planSubmitted: !!planovi[k.email],
-        planSubmittedAt: planovi[k.email]?.submittedAt || null,
-        izvestajSubmitted: !!izvestaji[k.email],
-        izvestajSubmittedAt: izvestaji[k.email]?.submittedAt || null,
+        planSubmitted: !!planoviMap[k.email],
+        planSubmittedAt: planoviMap[k.email] || null,
+        izvestajSubmitted: !!izvestajiMap[k.email],
+        izvestajSubmittedAt: izvestajiMap[k.email] || null,
     })));
 });
 
-// Admin: view a specific user's submission
-app.get('/admin/submission/:type/:email', (req, res) => {
-    const file = req.params.type === 'izvestaj' ? IZVESTAJI_PATH : PLANOVI_PATH;
-    const sub = load(file)[req.params.email];
-    if (!sub) return res.status(404).json({ error: "Нема предате документације" });
-    res.json(sub);
+// Admin — ucitaj submission za jednog korisnika
+app.get('/admin/submission/:type/:email', async (req, res) => {
+    const table = req.params.type === 'izvestaj' ? 'izvestaji' : 'planovi';
+
+    const { data, error } = await supabase
+        .from(table)
+        .select('*')
+        .eq('email', req.params.email)
+        .single();
+
+    if (error || !data) return res.status(404).json({ error: "Нема предате документације" });
+
+    res.json(data);
 });
 
-// Superadmin: delete a specific user's submission (requires master key)
-app.delete('/admin/submission/:type/:email', (req, res) => {
-    if (!checkMasterKey(req, res)) return;
-    const file = req.params.type === 'izvestaj' ? IZVESTAJI_PATH : PLANOVI_PATH;
-    const data = load(file);
-    const email = req.params.email;
-    if (!data[email]) return res.status(404).json({ error: "Документ не постоји." });
-    delete data[email];
-    save(file, data);
-    res.json({ success: true });
-});
-
-// Generate a single docx on the fly
+// Generisi jedan docx
 app.post('/generate/:type', async (req, res) => {
     const { ime, outside, inside } = req.body;
     const type = req.params.type;
-    const buffer = await buildSingle(type, ime, outside, inside);
-    const prefix = type === 'izvestaj' ? 'Izvestaj' : 'Plan';
-    res.setHeader('Content-Disposition', `attachment; filename="${prefix}_strucnog_usavrsavanja_${ime.replace(/\s+/g, '_')}.docx"`);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    res.send(buffer);
+    try {
+        const buffer = await buildSingle(type, ime, outside, inside);
+        const prefix = type === 'izvestaj' ? 'Izvestaj' : 'Plan';
+        res.setHeader('Content-Disposition', `attachment; filename="${prefix}_strucnog_usavrsavanja_${ime.replace(/\s+/g, '_')}.docx"`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        res.send(buffer);
+    } catch (err) {
+        console.error("Generate error:", err);
+        res.status(500).json({ error: "Greška pri generisanju dokumenta" });
+    }
 });
 
-// Generate combined docx for all submitted users
+// Generisi sve docx-ove u jednom fajlu
 app.get('/generate-all/:type', async (req, res) => {
     const type = req.params.type;
-    const file = type === 'izvestaj' ? IZVESTAJI_PATH : PLANOVI_PATH;
-    const entries = Object.values(load(file));
-    if (entries.length === 0) return res.status(404).json({ error: "Нема предатих докумената" });
-    const buffer = await buildCombined(type, entries);
-    const prefix = type === 'izvestaj' ? 'Svi_izvestaji' : 'Svi_planovi';
-    res.setHeader('Content-Disposition', `attachment; filename="${prefix}_strucnog_usavrsavanja.docx"`);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    res.send(buffer);
+    const table = type === 'izvestaj' ? 'izvestaji' : 'planovi';
+
+    const { data, error } = await supabase.from(table).select('*');
+    if (error || !data || data.length === 0) return res.status(404).json({ error: "Нема предатих докумената" });
+
+    try {
+        const buffer = await buildCombined(type, data);
+        const prefix = type === 'izvestaj' ? 'Svi_izvestaji' : 'Svi_planovi';
+        res.setHeader('Content-Disposition', `attachment; filename="${prefix}_strucnog_usavrsavanja.docx"`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        res.send(buffer);
+    } catch (err) {
+        console.error("Generate-all error:", err);
+        res.status(500).json({ error: "Greška pri generisanju dokumenta" });
+    }
 });
 
-const PORT = process.env.PORT || 10000;
-
-app.listen(PORT, "0.0.0.0", () => {
-    console.log("Server running on port", PORT);
-});
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log("Server running on port", PORT));
