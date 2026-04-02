@@ -197,7 +197,7 @@ app.post('/login', async (req, res) => {
 
     if (error || !data) return res.status(401).json({ error: "Email nije pronađen" });
 
-    res.json({ ime: data.ime, email: data.email, admin: data.admin || false });
+    res.json({ ime: data.ime, email: data.email, admin: data.admin || false, super_admin: data.super_admin || false });
 });
 
 // Sacuvaj plan ili izvestaj
@@ -255,6 +255,7 @@ app.get('/admin/users', async (req, res) => {
         email: k.email,
         ime: k.ime,
         admin: k.admin || false,
+        super_admin: k.super_admin || false,
         planSubmitted: !!planoviMap[k.email],
         planSubmittedAt: planoviMap[k.email] || null,
         izvestajSubmitted: !!izvestajiMap[k.email],
@@ -275,6 +276,35 @@ app.get('/admin/submission/:type/:email', async (req, res) => {
     if (error || !data) return res.status(404).json({ error: "Нема предате документације" });
 
     res.json(data);
+});
+
+// Admin — obrisi submission (svi admini, zaštićeno lozinkom iz env)
+app.delete('/admin/submission/:type/:email', async (req, res) => {
+    const masterKey = req.headers['x-master-key'];
+    const deletePassword = process.env.DELETE_PASSWORD;
+
+    if (!deletePassword) {
+        console.error("DELETE_PASSWORD env variable nije postavljena!");
+        return res.status(500).json({ error: "Лозинка за брисање није конфигурисана на серверу." });
+    }
+
+    if (!masterKey || masterKey !== deletePassword) {
+        return res.status(403).json({ error: "Погрешна лозинка. Брисање није дозвољено." });
+    }
+
+    const table = req.params.type === 'izvestaj' ? 'izvestaji' : 'planovi';
+
+    const { error } = await supabase
+        .from(table)
+        .delete()
+        .eq('email', req.params.email);
+
+    if (error) {
+        console.error("Supabase delete error:", error);
+        return res.status(500).json({ error: "Грешка при брисању из базе." });
+    }
+
+    res.json({ success: true });
 });
 
 // Generisi jedan docx
