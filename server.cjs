@@ -53,6 +53,123 @@ function toCyrillic(text) {
     return result;
 }
 
+/**
+ * Генерише формални опис активности интегришући назив у врсту активности.
+ * Ако нема назива, враћа само врсту активности.
+ */
+function buildAktivnostOpis(aktivnost, naziv) {
+    if (!naziv || !naziv.trim()) return aktivnost || "";
+    const a = (aktivnost || "").trim();
+    const n = naziv.trim();
+
+    // Угледни / огледни час
+    if (a.includes("угледног или огледног часа") || a.includes("угледног или огледног")) {
+        return `Угледни/огледни час „${n}"`;
+    }
+    // Радионица
+    if (a.includes("радионице за наставнике")) {
+        return `Радионица „${n}"`;
+    }
+    // Приказ стручне књиге / приручника
+    if (a.includes("стручне књиге, приручника")) {
+        return `Приказ стручне публикације „${n}"`;
+    }
+    // Приказ блога / сајта
+    if (a.includes("блога, сајта")) {
+        return `Приказ мултимедијалног садржаја „${n}"`;
+    }
+    // Приказ стручног чланка
+    if (a.includes("стручног чланка")) {
+        return `Приказ стручног рада „${n}"`;
+    }
+    // Приказ стручне посете
+    if (a.includes("стручне посете, студијског путовања")) {
+        return `Приказ стручне посете „${n}"`;
+    }
+    // Приказ примене наученог
+    if (a.includes("примене наученог")) {
+        return `Приказ примене наученог – „${n}"`;
+    }
+    // Приказ резултата праћења
+    if (a.includes("резултата праћења")) {
+        return `Приказ резултата праћења „${n}"`;
+    }
+    // Приказ законских аката
+    if (a.includes("законских и подзаконских")) {
+        return `Приказ законске регулативе „${n}"`;
+    }
+    // Приказ појединог облика
+    if (a.includes("појединог облика стручног")) {
+        return `Приказ облика стручног усавршавања „${n}"`;
+    }
+    // Учествовање у истраживањима
+    if (a.includes("истраживањима")) {
+        return `Учешће у истраживању „${n}"`;
+    }
+    // Пројекти
+    if (a.includes("пројектима образовно")) {
+        return `Учешће у пројекту „${n}"`;
+    }
+    // Програми националног значаја
+    if (a.includes("програмима од националног")) {
+        return `Учешће у програму „${n}"`;
+    }
+    // Програми огледа
+    if (a.includes("програмима огледа")) {
+        return `Учешће у програму огледа „${n}"`;
+    }
+    // Предавања, трибине, округли столови
+    if (a.includes("предавања, трибина, округлих")) {
+        return `Организовање стручног скупа „${n}"`;
+    }
+    // Стручна посета, изложба
+    if (a.includes("стручне посете, посете изложби")) {
+        return `Организовање стручне посете „${n}"`;
+    }
+    // Обука без акредитације
+    if (a.includes("обуке (без акредитације)")) {
+        return `Организовање обуке „${n}"`;
+    }
+    // Аутор уџбеника
+    if (a.includes("уџбеника, стручне књиге")) {
+        return `Ауторство публикације „${n}"`;
+    }
+    // Аутор сајта / блога
+    if (a.includes("сајта, блога")) {
+        return `Ауторство мултимедијалног садржаја „${n}"`;
+    }
+    // Рецензија
+    if (a.includes("Рецензија")) {
+        return `Рецензија публикације „${n}"`;
+    }
+    // Аутор стручног рада
+    if (a.includes("стручног рада")) {
+        return `Ауторство стручног рада „${n}"`;
+    }
+    // Акредитација програма
+    if (a.includes("Акредитација програма")) {
+        return `Акредитација програма „${n}"`;
+    }
+    // Акредитација стручног скупа
+    if (a.includes("Акредитација стручног скупа")) {
+        return `Акредитација стручног скупа „${n}"`;
+    }
+    // Такмичења — припремање
+    if (a.includes("Припремање ученика")) {
+        return `${a} – „${n}"`;
+    }
+    // Организација такмичења
+    if (a.includes("Организација такмичења")) {
+        return `${a} – „${n}"`;
+    }
+    // Рад са волонтерима
+    if (a.includes("волонтерима")) {
+        return `Рад са волонтерима/приправницима – „${n}"`;
+    }
+    // Generički fallback
+    return `${a} – „${n}"`;
+}
+
 // ── DOCX helpers ──────────────────────────────────────────────
 const TNR = "Times New Roman";
 const LANG = { id: "sr-Cyrl-RS" };
@@ -89,7 +206,7 @@ function buildPlanChildren(ime, outside, inside) {
     return [
         centeredBold("ПЛАН СТРУЧНОГ УСАВРШАВАЊА ЗА 2025/2026. ГОДИНУ", 28, false, { after: 200 }),
         normalPara([
-            new TextRun({ text: "Ime и презиме запосленог: ", font: TNR, size: 24, language: LANG }),
+            new TextRun({ text: "Име и презиме запосленог: ", font: TNR, size: 24, language: LANG }),
             new TextRun({ text: imeCyr, font: TNR, size: 24, bold: true, language: LANG }),
         ], { after: 200 }),
         centeredBold("АКТИВНОСТИ СТРУЧНОГ УСАВРШАВАЊА", 24, false, { after: 0 }),
@@ -127,12 +244,13 @@ function buildPlanChildren(ime, outside, inside) {
 
 function buildIzvestajChildren(ime, outside, inside) {
     const ow = [3539, 1559, 1985, 1979];
-    const iw = [2200, 2000, 2000, 1800, 1062];
+    // Колоне: Активност (са интегрисаним називом), Начин учествовања, Датум реализације, Број бодова
+    const iw = [3200, 2000, 1600, 1062];
     const imeCyr = toCyrillic(ime);
     return [
         centeredBold("ИЗВЕШТАЈ О СТРУЧНОМ УСАВРШАВАЊУ ЗА 2024/2025. ГОДИНУ", 28, false, { after: 200 }),
         normalPara([
-            new TextRun({ text: "Ime и презиме запосленог: ", font: TNR, size: 24, language: LANG }),
+            new TextRun({ text: "Име и презиме запосленог: ", font: TNR, size: 24, language: LANG }),
             new TextRun({ text: imeCyr, font: TNR, size: 24, bold: true, language: LANG }),
         ], { after: 200 }),
         centeredBold("АКТИВНОСТИ СТРУЧНОГ УСАВРШАВАЊА", 24, false, { after: 0 }),
@@ -155,8 +273,22 @@ function buildIzvestajChildren(ime, outside, inside) {
         new Table({
             width: { size: iw.reduce((a, b) => a + b, 0), type: WidthType.DXA }, columnWidths: iw,
             rows: [
-                new TableRow({ children: [headerCell("Активност", iw[0]), headerCell("Назив", iw[1]), headerCell("Начин учествовања", iw[2]), headerCell("Датум реализације", iw[3]), headerCell("Број бодова", iw[4])] }),
-                ...inside.map(r => new TableRow({ children: [cell(r.aktivnost, iw[0]), cell(r.naziv, iw[1]), cell(r.nacin, iw[2]), cell(r.datum, iw[3]), cell(r.bodovi, iw[4])] }))
+                new TableRow({ children: [
+                    headerCell("Активност", iw[0]),
+                    headerCell("Начин учествовања", iw[1]),
+                    headerCell("Датум реализације", iw[2]),
+                    headerCell("Број бодова", iw[3])
+                ] }),
+                ...inside.map(r => {
+                    // Генерисање комбинованог описа активности
+                    const opisAktivnosti = buildAktivnostOpis(r.aktivnost, r.naziv);
+                    return new TableRow({ children: [
+                        cell(opisAktivnosti, iw[0]),
+                        cell(r.nacin, iw[1]),
+                        cell(r.datum, iw[2]),
+                        cell(r.bodovi, iw[3])
+                    ]});
+                })
             ]
         }),
         normalPara([
