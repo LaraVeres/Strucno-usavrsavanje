@@ -53,7 +53,68 @@ function toCyrillic(text) {
     return result;
 }
 
-// ── DOCX helpers ──────────────────────────────────────────────
+// ── Aktivnost opis helper ─────────────────────────────────────
+function buildAktivnostOpis(aktivnost, naziv) {
+    if (!naziv || !naziv.trim()) return aktivnost || "";
+    const a = (aktivnost || "").trim();
+    const n = naziv.trim();
+
+    if (a.includes("угледног или огледног часа") || a.includes("угледног или огледног"))
+        return `Угледни/огледни час „${n}"`;
+    if (a.includes("радионице за наставнике"))
+        return `Реализација радионице „${n}"`;
+    if (a.includes("стручне књиге, приручника"))
+        return `Приказ стручне публикације „${n}"`;
+    if (a.includes("блога, сајта"))
+        return `Приказ мултимедијалног садржаја „${n}"`;
+    if (a.includes("стручног чланка"))
+        return `Приказ стручног рада „${n}"`;
+    if (a.includes("стручне посете, студијског путовања"))
+        return `Приказ стручне посете „${n}"`;
+    if (a.includes("примене наученог"))
+        return `Приказ примене наученог – „${n}"`;
+    if (a.includes("резултата праћења"))
+        return `Приказ резултата праћења „${n}"`;
+    if (a.includes("законских и подзаконских"))
+        return `Приказ законске регулативе „${n}"`;
+    if (a.includes("појединог облика стручног"))
+        return `Приказ облика стручног усавршавања „${n}"`;
+    if (a.includes("истраживањима"))
+        return `Учешће у истраживању „${n}"`;
+    if (a.includes("пројектима образовно"))
+        return `Учешће у пројекту „${n}"`;
+    if (a.includes("програмима од Националног"))
+        return `Учешће у програму „${n}"`;
+    if (a.includes("програмима огледа"))
+        return `Учешће у програму огледа „${n}"`;
+    if (a.includes("предавања, трибина, округлих"))
+        return `Организовање стручног скупа „${n}"`;
+    if (a.includes("стручне посете, посете изложби"))
+        return `Организовање стручне посете „${n}"`;
+    if (a.includes("обуке (без акредитације)"))
+        return `Организовање обуке „${n}"`;
+    if (a.includes("уџбеника, стручне књиге"))
+        return `Ауторство публикације „${n}"`;
+    if (a.includes("сајта, блога"))
+        return `Ауторство мултимедијалног садржаја „${n}"`;
+    if (a.includes("Рецензија"))
+        return `Рецензија публикације „${n}"`;
+    if (a.includes("стручног рада"))
+        return `Ауторство стручног рада „${n}"`;
+    if (a.includes("Акредитација програма"))
+        return `Акредитација програма „${n}"`;
+    if (a.includes("Акредитација стручног скупа"))
+        return `Акредитација стручног скупа „${n}"`;
+    if (a.includes("волонтерима"))
+        return `Рад са волонтерима/приправницима – „${n}"`;
+    if (a.includes("Припремање ученика"))
+        return `${a} – „${n}"`;
+    if (a.includes("Организација такмичења"))
+        return `${a} – „${n}"`;
+    return `${a} – „${n}"`;
+}
+
+
 const TNR = "Times New Roman";
 const LANG = { id: "sr-Cyrl-RS" };
 const border = { style: BorderStyle.SINGLE, size: 4, color: "000000" };
@@ -127,8 +188,8 @@ function buildPlanChildren(ime, outside, inside) {
 
 function buildIzvestajChildren(ime, outside, inside) {
     const ow = [3539, 1559, 1985, 1979];
-    // Колоне: Врста активности | Назив активности | Начин учествовања | Датум реализације | Број бодова
-    const iw = [2400, 2000, 1800, 1400, 862];
+    // Колоне: Активност (интегрисан назив) | Начин учествовања | Датум реализације | Број бодова
+    const iw = [3200, 2000, 1600, 1062];
     const imeCyr = toCyrillic(ime);
     return [
         centeredBold("ИЗВЕШТАЈ О СТРУЧНОМ УСАВРШАВАЊУ ЗА 2024/2025. ГОДИНУ", 28, false, { after: 200 }),
@@ -157,18 +218,16 @@ function buildIzvestajChildren(ime, outside, inside) {
             width: { size: iw.reduce((a, b) => a + b, 0), type: WidthType.DXA }, columnWidths: iw,
             rows: [
                 new TableRow({ children: [
-                    headerCell("Врста активности", iw[0]),
-                    headerCell("Назив активности", iw[1]),
-                    headerCell("Начин учествовања", iw[2]),
-                    headerCell("Датум реализације", iw[3]),
-                    headerCell("Број бодова", iw[4])
+                    headerCell("Активност", iw[0]),
+                    headerCell("Начин учествовања", iw[1]),
+                    headerCell("Датум реализације", iw[2]),
+                    headerCell("Број бодова", iw[3])
                 ] }),
                 ...inside.map(r => new TableRow({ children: [
-                    cell(r.aktivnost, iw[0]),
-                    cell(r.naziv, iw[1]),
-                    cell(r.nacin, iw[2]),
-                    cell(r.datum, iw[3]),
-                    cell(r.bodovi, iw[4])
+                    cell(buildAktivnostOpis(r.aktivnost, r.naziv), iw[0]),
+                    cell(r.nacin, iw[1]),
+                    cell(r.datum, iw[2]),
+                    cell(r.bodovi, iw[3])
                 ]}))
             ]
         }),
