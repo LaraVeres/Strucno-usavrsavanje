@@ -256,6 +256,16 @@ async function buildCombined(type, entries) {
 
 // ── ROUTES ────────────────────────────────────────────────────
 
+// Lista skola (za superadmin izbor)
+app.get('/skole', async (req, res) => {
+    const { data, error } = await supabase
+        .from('skole')
+        .select('id, naziv, slug')
+        .order('naziv');
+    if (error) return res.status(500).json({ error: "Greska" });
+    res.json(data);
+});
+
 // Login
 app.post('/login', async (req, res) => {
     const { email } = req.body;
@@ -263,18 +273,26 @@ app.post('/login', async (req, res) => {
 
     const { data, error } = await supabase
         .from('korisnici')
-        .select('*')
+        .select('*, skole(id, naziv, slug)')
         .ilike('email', email.trim())
         .single();
 
-    if (error || !data) return res.status(401).json({ error: "Email nije pronađen" });
+    if (error || !data) return res.status(401).json({ error: "Email nije pronadjen" });
 
-    res.json({ ime: data.ime, email: data.email, admin: data.admin || false, super_admin: data.super_admin || false });
+    res.json({
+        ime: data.ime,
+        email: data.email,
+        admin: data.admin || false,
+        super_admin: data.super_admin || false,
+        skola_id: data.skola_id || null,
+        skola_naziv: data.skole?.naziv || null,
+        skola_slug: data.skole?.slug || null,
+    });
 });
 
 // Sacuvaj plan ili izvestaj
 app.post('/submit/:type', async (req, res) => {
-    const { email, ime, outside, inside } = req.body;
+    const { email, ime, outside, inside, skola_id } = req.body;
     if (!email) return res.status(400).json({ error: "Email je obavezan" });
 
     const table = req.params.type === 'izvestaj' ? 'izvestaji' : 'planovi';
@@ -286,12 +304,13 @@ app.post('/submit/:type', async (req, res) => {
             ime,
             outside,
             inside,
+            skola_id: skola_id || null,
             submitted_at: new Date().toISOString()
         }, { onConflict: 'email' });
 
     if (error) {
         console.error("Supabase upsert error:", error);
-        return res.status(500).json({ error: "Greška pri čuvanju" });
+        return res.status(500).json({ error: "Greska pri cuvanju" });
     }
 
     res.json({ success: true });
@@ -312,13 +331,20 @@ app.get('/my/:type/:email', async (req, res) => {
     res.json(data);
 });
 
-// Admin — lista svih korisnika sa statusom
+// Admin — lista svih korisnika sa statusom (filtrira po skola_id)
 app.get('/admin/users', async (req, res) => {
-    const { data: korisnici, error } = await supabase.from('korisnici').select('*');
-    if (error) return res.status(500).json({ error: "Greška" });
+    const { skola_id } = req.query;
+    if (!skola_id) return res.status(400).json({ error: "skola_id je obavezan" });
 
-    const { data: planovi } = await supabase.from('planovi').select('email, submitted_at');
-    const { data: izvestaji } = await supabase.from('izvestaji').select('email, submitted_at');
+    const { data: korisnici, error } = await supabase
+        .from('korisnici')
+        .select('*')
+        .eq('skola_id', skola_id)
+        .eq('super_admin', false);
+    if (error) return res.status(500).json({ error: "Greska" });
+
+    const { data: planovi } = await supabase.from('planovi').select('email, submitted_at').eq('skola_id', skola_id);
+    const { data: izvestaji } = await supabase.from('izvestaji').select('email, submitted_at').eq('skola_id', skola_id);
 
     const planoviMap = Object.fromEntries((planovi || []).map(p => [p.email, p.submitted_at]));
     const izvestajiMap = Object.fromEntries((izvestaji || []).map(i => [i.email, i.submitted_at]));
@@ -399,9 +425,11 @@ app.post('/generate/:type', async (req, res) => {
 app.get('/generate-all/:type', async (req, res) => {
     const type = req.params.type;
     const table = type === 'izvestaj' ? 'izvestaji' : 'planovi';
+    const { skola_id } = req.query;
+    if (!skola_id) return res.status(400).json({ error: "skola_id je obavezan" });
 
-    const { data, error } = await supabase.from(table).select('*');
-    if (error || !data || data.length === 0) return res.status(404).json({ error: "Нема предатих докумената" });
+    const { data, error } = await supabase.from(table).select('*').eq('skola_id', skola_id);
+    if (error || !data || data.length === 0) return res.status(404).json({ error: "Nema predatih dokumenata" });
 
     try {
         const buffer = await buildCombined(type, data);
