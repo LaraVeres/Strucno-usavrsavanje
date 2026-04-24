@@ -1,45 +1,38 @@
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const {
-    Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-    AlignmentType, BorderStyle, WidthType, VerticalAlign, ShadingType
-} = require('docx');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
-
-const JWT_SECRET = process.env.JWT_SECRET;
-const JWT_EXPIRES = '20m';
-const COOKIE_MAX_AGE = 20 * 60 * 1000; // 20 minuta u ms
+const {
+    Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+    AlignmentType, BorderStyle, WidthType, VerticalAlign, ShadingType
+} = require('docx');
 
 const app = express();
 
+// ── CORS ──────────────────────────────────────────────────────
 app.use(cors({
     origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    credentials: true  // obavezno za cookies
+    credentials: true
 }));
-app.use(express.json());
 
+app.use(express.json());
 app.use(cookieParser());
 
-function requireAuth(req, res, next) {
-    const token = req.cookies?.token;
-    if (!token) return res.status(401).json({ error: "Nije prijavljen" });
-    
-    try {
-        const payload = jwt.verify(token, JWT_SECRET);
-        req.korisnik = payload;
-        next();
-    } catch (err) {
-        // Token istekao ili nevažeći — obriši cookie
-        res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'strict' });
-        return res.status(401).json({ error: "Sesija je istekla. Prijavi se ponovo." });
-    }
-}
+// ── Supabase ──────────────────────────────────────────────────
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_KEY
+);
 
-// Rate limiting za login (maks 10 pokušaja / 15min po IP-u)
+// ── JWT config ────────────────────────────────────────────────
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_EXPIRES = '20m';
+const COOKIE_MAX_AGE = 20 * 60 * 1000;
+
+// ── Rate limiter za login ─────────────────────────────────────
 const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 10,
@@ -48,18 +41,20 @@ const loginLimiter = rateLimit({
     legacyHeaders: false,
 });
 
-// CORS mora da dozvoli credentials i tačan origin
-// Zameni postojeći app.use(cors(...)) sa ovim:
+// ── Auth middleware ───────────────────────────────────────────
+function requireAuth(req, res, next) {
+    const token = req.cookies?.token;
+    if (!token) return res.status(401).json({ error: "Nije prijavljen" });
 
-// ── Supabase ──────────────────────────────────────────────────
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_KEY
-);
-
-app.get("/", (req, res) => {
-    res.json({ status: "Backend radi sa Supabase bazom" });
-});
+    try {
+        const payload = jwt.verify(token, JWT_SECRET);
+        req.korisnik = payload;
+        next();
+    } catch (err) {
+        res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'strict' });
+        return res.status(401).json({ error: "Sesija je istekla. Prijavi se ponovo." });
+    }
+}
 
 // ── Helpers ───────────────────────────────────────────────────
 function toCyrillic(text) {
@@ -90,7 +85,6 @@ function toCyrillic(text) {
     return result;
 }
 
-// ── Aktivnost opis helper ─────────────────────────────────────
 function buildAktivnostOpis(aktivnost, naziv) {
     if (!naziv || !naziv.trim()) return aktivnost || "";
     const a = (aktivnost || "").trim();
@@ -150,7 +144,6 @@ function buildAktivnostOpis(aktivnost, naziv) {
         return `${a} – „${n}"`;
     return `${a} – „${n}"`;
 }
-
 
 const TNR = "Times New Roman";
 const LANG = { id: "sr-Cyrl-RS" };
@@ -225,7 +218,6 @@ function buildPlanChildren(ime, outside, inside) {
 
 function buildIzvestajChildren(ime, outside, inside) {
     const ow = [3539, 1559, 1985, 1979];
-    // Колоне: Активност (интегрисан назив) | Начин учествовања | Датум реализације | Број бодова
     const iw = [3200, 2000, 1600, 1062];
     const imeCyr = toCyrillic(ime);
     return [
@@ -293,17 +285,12 @@ async function buildCombined(type, entries) {
 
 // ── ROUTES ────────────────────────────────────────────────────
 
-// Lista skola (za superadmin izbor)
-app.get('/skole', requireAuth, async (req, res) => {
-    const { data, error } = await supabase
-        .from('skole')
-        .select('id, naziv, slug')
-        .order('naziv');
-    if (error) return res.status(500).json({ error: "Greska" });
-    res.json(data);
+app.get("/", (req, res) => {
+    res.json({ status: "Backend radi sa Supabase bazom" });
 });
 
-// Login
+// ── Auth rute (bez requireAuth) ───────────────────────────────
+
 app.post('/login', loginLimiter, async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password)
@@ -315,7 +302,7 @@ app.post('/login', loginLimiter, async (req, res) => {
         .ilike('email', email.trim())
         .single();
 
-    // Namerno ista poruka greške — ne otkriva da li email postoji
+    // Ista poruka greške — ne otkriva da li email postoji
     if (error || !data)
         return res.status(401).json({ error: "Pogrešan email ili lozinka" });
 
@@ -337,13 +324,12 @@ app.post('/login', loginLimiter, async (req, res) => {
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
 
     res.cookie('token', token, {
-        httpOnly: true,      // JS ne može da čita
-        secure: true,        // samo HTTPS
-        sameSite: 'strict',  // zaštita od CSRF
+        httpOnly: true,
+        secure: true,
+        sameSite: 'strict',
         maxAge: COOKIE_MAX_AGE
     });
 
-    // Ne šalji ništa osetljivo u body-u
     res.json({ ok: true, korisnik: payload });
 });
 
@@ -355,6 +341,8 @@ app.post('/logout', (req, res) => {
 app.get('/me', requireAuth, (req, res) => {
     res.json({ korisnik: req.korisnik });
 });
+
+// ── Promena lozinke ───────────────────────────────────────────
 
 app.post('/change-password', requireAuth, async (req, res) => {
     const { oldPassword, newPassword } = req.body;
@@ -381,6 +369,8 @@ app.post('/change-password', requireAuth, async (req, res) => {
     res.json({ success: true });
 });
 
+// ── Admin reset lozinke ───────────────────────────────────────
+
 app.post('/admin/reset-password', requireAuth, async (req, res) => {
     if (!req.korisnik.admin && !req.korisnik.super_admin)
         return res.status(403).json({ error: "Nije dozvoljeno" });
@@ -399,6 +389,18 @@ app.post('/admin/reset-password', requireAuth, async (req, res) => {
 
     if (error) return res.status(500).json({ error: "Greška pri resetovanju" });
     res.json({ success: true });
+});
+
+// ── Zaštićene rute ────────────────────────────────────────────
+
+// Lista skola (za superadmin izbor)
+app.get('/skole', requireAuth, async (req, res) => {
+    const { data, error } = await supabase
+        .from('skole')
+        .select('id, naziv, slug')
+        .order('naziv');
+    if (error) return res.status(500).json({ error: "Greska" });
+    res.json(data);
 });
 
 // Sacuvaj plan ili izvestaj
@@ -442,7 +444,7 @@ app.get('/my/:type/:email', requireAuth, async (req, res) => {
     res.json(data);
 });
 
-// Admin — lista svih korisnika sa statusom (filtrira po skola_id)
+// Admin — lista svih korisnika sa statusom
 app.get('/admin/users', requireAuth, async (req, res) => {
     const { skola_id } = req.query;
     if (!skola_id) return res.status(400).json({ error: "skola_id je obavezan" });
@@ -487,8 +489,11 @@ app.get('/admin/submission/:type/:email', requireAuth, async (req, res) => {
     res.json(data);
 });
 
-// Admin — obrisi submission (svi admini, zaštićeno lozinkom iz env)
+// Admin — obrisi submission
 app.delete('/admin/submission/:type/:email', requireAuth, async (req, res) => {
+    if (!req.korisnik.admin && !req.korisnik.super_admin)
+        return res.status(403).json({ error: "Nije dozvoljeno" });
+
     const masterKey = req.headers['x-master-key'];
     const deletePassword = process.env.DELETE_PASSWORD;
 
