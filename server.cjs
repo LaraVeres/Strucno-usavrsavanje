@@ -5,14 +5,51 @@ const {
     Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
     AlignmentType, BorderStyle, WidthType, VerticalAlign, ShadingType
 } = require('docx');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
+const rateLimit = require('express-rate-limit');
+
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_EXPIRES = '20m';
+const COOKIE_MAX_AGE = 20 * 60 * 1000; // 20 minuta u ms
 
 const app = express();
 
 app.use(cors({
-    origin: true,
-    credentials: true
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    credentials: true  // obavezno za cookies
 }));
 app.use(express.json());
+
+app.use(cookieParser());
+
+function requireAuth(req, res, next) {
+    const token = req.cookies?.token;
+    if (!token) return res.status(401).json({ error: "Nije prijavljen" });
+    
+    try {
+        const payload = jwt.verify(token, JWT_SECRET);
+        req.korisnik = payload;
+        next();
+    } catch (err) {
+        // Token istekao ili nevažeći — obriši cookie
+        res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'strict' });
+        return res.status(401).json({ error: "Sesija je istekla. Prijavi se ponovo." });
+    }
+}
+
+// Rate limiting za login (maks 10 pokušaja / 15min po IP-u)
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: { error: "Previše neuspelih pokušaja. Sačekaj 15 minuta." },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+// CORS mora da dozvoli credentials i tačan origin
+// Zameni postojeći app.use(cors(...)) sa ovim:
 
 // ── Supabase ──────────────────────────────────────────────────
 const supabase = createClient(
@@ -257,7 +294,7 @@ async function buildCombined(type, entries) {
 // ── ROUTES ────────────────────────────────────────────────────
 
 // Lista skola (za superadmin izbor)
-app.get('/skole', async (req, res) => {
+app.get('/skole', requireAuth, async (req, res) => {
     const { data, error } = await supabase
         .from('skole')
         .select('id, naziv, slug')
@@ -267,9 +304,10 @@ app.get('/skole', async (req, res) => {
 });
 
 // Login
-app.post('/login', async (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Email je obavezan" });
+app.post('/login', loginLimiter, async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password)
+        return res.status(400).json({ error: "Email i lozinka su obavezni" });
 
     const { data, error } = await supabase
         .from('korisnici')
@@ -277,21 +315,94 @@ app.post('/login', async (req, res) => {
         .ilike('email', email.trim())
         .single();
 
-    if (error || !data) return res.status(401).json({ error: "Email nije pronadjen" });
+    // Namerno ista poruka greške — ne otkriva da li email postoji
+    if (error || !data)
+        return res.status(401).json({ error: "Pogrešan email ili lozinka" });
 
-    res.json({
-        ime: data.ime,
+    if (data.password_hash) {
+        const ok = await bcrypt.compare(password, data.password_hash);
+        if (!ok) return res.status(401).json({ error: "Pogrešan email ili lozinka" });
+    }
+
+    const payload = {
         email: data.email,
+        ime: data.ime,
         admin: data.admin || false,
         super_admin: data.super_admin || false,
         skola_id: data.skola_id || null,
         skola_naziv: data.skole?.naziv || null,
         skola_slug: data.skole?.slug || null,
+    };
+
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+
+    res.cookie('token', token, {
+        httpOnly: true,      // JS ne može da čita
+        secure: true,        // samo HTTPS
+        sameSite: 'strict',  // zaštita od CSRF
+        maxAge: COOKIE_MAX_AGE
     });
+
+    // Ne šalji ništa osetljivo u body-u
+    res.json({ ok: true, korisnik: payload });
+});
+
+app.post('/logout', (req, res) => {
+    res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'strict' });
+    res.json({ ok: true });
+});
+
+app.get('/me', requireAuth, (req, res) => {
+    res.json({ korisnik: req.korisnik });
+});
+
+app.post('/change-password', requireAuth, async (req, res) => {
+    const { oldPassword, newPassword } = req.body;
+    if (!oldPassword || !newPassword)
+        return res.status(400).json({ error: "Sva polja su obavezna" });
+    if (newPassword.length < 8)
+        return res.status(400).json({ error: "Lozinka mora imati najmanje 8 karaktera" });
+
+    const { data } = await supabase
+        .from('korisnici')
+        .select('password_hash')
+        .ilike('email', req.korisnik.email)
+        .single();
+
+    if (!data) return res.status(404).json({ error: "Korisnik nije pronađen" });
+
+    if (data.password_hash) {
+        const ok = await bcrypt.compare(oldPassword, data.password_hash);
+        if (!ok) return res.status(401).json({ error: "Stara lozinka nije ispravna" });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    await supabase.from('korisnici').update({ password_hash: hash }).ilike('email', req.korisnik.email);
+    res.json({ success: true });
+});
+
+app.post('/admin/reset-password', requireAuth, async (req, res) => {
+    if (!req.korisnik.admin && !req.korisnik.super_admin)
+        return res.status(403).json({ error: "Nije dozvoljeno" });
+
+    const masterKey = req.headers['x-master-key'];
+    if (!masterKey || masterKey !== process.env.DELETE_PASSWORD)
+        return res.status(403).json({ error: "Pogrešan master ključ" });
+
+    const { email, newPassword } = req.body;
+    if (!email || !newPassword)
+        return res.status(400).json({ error: "Nedostaju podaci" });
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    const { error } = await supabase
+        .from('korisnici').update({ password_hash: hash }).ilike('email', email);
+
+    if (error) return res.status(500).json({ error: "Greška pri resetovanju" });
+    res.json({ success: true });
 });
 
 // Sacuvaj plan ili izvestaj
-app.post('/submit/:type', async (req, res) => {
+app.post('/submit/:type', requireAuth, async (req, res) => {
     const { email, ime, outside, inside, skola_id } = req.body;
     if (!email) return res.status(400).json({ error: "Email je obavezan" });
 
@@ -317,7 +428,7 @@ app.post('/submit/:type', async (req, res) => {
 });
 
 // Ucitaj sacuvani plan/izvestaj za korisnika
-app.get('/my/:type/:email', async (req, res) => {
+app.get('/my/:type/:email', requireAuth, async (req, res) => {
     const table = req.params.type === 'izvestaj' ? 'izvestaji' : 'planovi';
 
     const { data, error } = await supabase
@@ -332,7 +443,7 @@ app.get('/my/:type/:email', async (req, res) => {
 });
 
 // Admin — lista svih korisnika sa statusom (filtrira po skola_id)
-app.get('/admin/users', async (req, res) => {
+app.get('/admin/users', requireAuth, async (req, res) => {
     const { skola_id } = req.query;
     if (!skola_id) return res.status(400).json({ error: "skola_id je obavezan" });
 
@@ -362,7 +473,7 @@ app.get('/admin/users', async (req, res) => {
 });
 
 // Admin — ucitaj submission za jednog korisnika
-app.get('/admin/submission/:type/:email', async (req, res) => {
+app.get('/admin/submission/:type/:email', requireAuth, async (req, res) => {
     const table = req.params.type === 'izvestaj' ? 'izvestaji' : 'planovi';
 
     const { data, error } = await supabase
@@ -377,7 +488,7 @@ app.get('/admin/submission/:type/:email', async (req, res) => {
 });
 
 // Admin — obrisi submission (svi admini, zaštićeno lozinkom iz env)
-app.delete('/admin/submission/:type/:email', async (req, res) => {
+app.delete('/admin/submission/:type/:email', requireAuth, async (req, res) => {
     const masterKey = req.headers['x-master-key'];
     const deletePassword = process.env.DELETE_PASSWORD;
 
@@ -406,7 +517,7 @@ app.delete('/admin/submission/:type/:email', async (req, res) => {
 });
 
 // Generisi jedan docx
-app.post('/generate/:type', async (req, res) => {
+app.post('/generate/:type', requireAuth, async (req, res) => {
     const { ime, outside, inside } = req.body;
     const type = req.params.type;
     try {
@@ -422,7 +533,7 @@ app.post('/generate/:type', async (req, res) => {
 });
 
 // Generisi sve docx-ove u jednom fajlu
-app.get('/generate-all/:type', async (req, res) => {
+app.get('/generate-all/:type', requireAuth, async (req, res) => {
     const type = req.params.type;
     const table = type === 'izvestaj' ? 'izvestaji' : 'planovi';
     const { skola_id } = req.query;
