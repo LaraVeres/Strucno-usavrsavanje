@@ -51,7 +51,7 @@ function requireAuth(req, res, next) {
         req.korisnik = payload;
         next();
     } catch (err) {
-        res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'strict' });
+        res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
         return res.status(401).json({ error: "Sesija je istekla. Prijavi se ponovo." });
     }
 }
@@ -326,7 +326,7 @@ app.post('/login', loginLimiter, async (req, res) => {
     res.cookie('token', token, {
         httpOnly: true,
         secure: true,
-        sameSite: 'strict',
+        sameSite: 'none',
         maxAge: COOKIE_MAX_AGE
     });
 
@@ -334,7 +334,7 @@ app.post('/login', loginLimiter, async (req, res) => {
 });
 
 app.post('/logout', (req, res) => {
-    res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'strict' });
+    res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
     res.json({ ok: true });
 });
 
