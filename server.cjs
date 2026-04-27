@@ -528,7 +528,8 @@ app.post('/generate/:type', requireAuth, async (req, res) => {
     try {
         const buffer = await buildSingle(type, ime, outside, inside);
         const prefix = type === 'izvestaj' ? 'Izvestaj' : 'Plan';
-        res.setHeader('Content-Disposition', `attachment; filename="${prefix}_strucnog_usavrsavanja_${ime.replace(/\s+/g, '_')}.docx"`);
+        const safeIme = encodeURIComponent(ime.replace(/\s+/g, '_'));
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${safeIme}_${prefix}.docx`);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         res.send(buffer);
     } catch (err) {
@@ -550,7 +551,7 @@ app.get('/generate-all/:type', requireAuth, async (req, res) => {
     try {
         const buffer = await buildCombined(type, data);
         const prefix = type === 'izvestaj' ? 'Svi_izvestaji' : 'Svi_planovi';
-        res.setHeader('Content-Disposition', `attachment; filename="${prefix}_strucnog_usavrsavanja.docx"`);
+        res.setHeader('Content-Disposition', `attachment; filename="${prefix}_strucnog_usavrsavanja.docx"; filename*=UTF-8''${prefix}_strucnog_usavrsavanja.docx`);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         res.send(buffer);
     } catch (err) {
