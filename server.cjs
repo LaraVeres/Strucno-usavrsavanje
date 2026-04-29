@@ -12,12 +12,10 @@ const {
 
 const app = express();
 
-// ── CORS ──────────────────────────────────────────────────────
 app.use(cors({
     origin: process.env.FRONTEND_URL || "http://localhost:5173",
     credentials: true
 }));
-
 app.use(express.json());
 app.use(cookieParser());
 
@@ -27,52 +25,80 @@ const supabase = createClient(
     process.env.SUPABASE_SERVICE_KEY
 );
 
-// ── JWT config ────────────────────────────────────────────────
+// ── JWT ───────────────────────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES = '20m';
 const COOKIE_MAX_AGE = 20 * 60 * 1000;
 
-// ── Rate limiter za login ─────────────────────────────────────
+// ── Lockout config ────────────────────────────────────────────
+const MAX_ATTEMPTS = 7;
+const WARN_AT = 5;
+const LOCKOUT_HOURS = 2;
+const LOCKOUT_MS = LOCKOUT_HOURS * 60 * 60 * 1000;
+
+// ── Rate limiter (IP-level backup) ───────────────────────────
 const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 10,
-    message: { error: "Previše neuspelih pokušaja. Sačekaj 15 minuta." },
+    windowMs: 30 * 60 * 1000,
+    max: 20,
+    message: { error: "Previše pokušaja sa ove IP adrese. Pokušaj za 30 minuta." },
     standardHeaders: true,
     legacyHeaders: false,
 });
 
-// ── Auth middleware ───────────────────────────────────────────
+// ── Middleware ────────────────────────────────────────────────
 function requireAuth(req, res, next) {
     const token = req.cookies?.token;
     if (!token) return res.status(401).json({ error: "Nije prijavljen" });
-
     try {
-        const payload = jwt.verify(token, JWT_SECRET);
-        req.korisnik = payload;
+        req.korisnik = jwt.verify(token, JWT_SECRET);
         next();
-    } catch (err) {
+    } catch {
         res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
         return res.status(401).json({ error: "Sesija je istekla. Prijavi se ponovo." });
     }
+}
+
+function requireSuperAdmin(req, res, next) {
+    if (!req.korisnik?.super_admin)
+        return res.status(403).json({ error: "Samo super administrator može ovo." });
+    next();
+}
+
+function requireMasterKey(req, res, next) {
+    const key = req.headers['x-master-key'];
+    if (!key || key !== process.env.DELETE_PASSWORD)
+        return res.status(403).json({ error: "Pogrešan master ključ." });
+    next();
+}
+
+// ── Audit log ────────────────────────────────────────────────
+async function auditLog(email, eventType, description, req, skolaId = null) {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+        || req.socket?.remoteAddress || 'unknown';
+    try {
+        await supabase.from('audit_log').insert({
+            email, event_type: eventType, description, ip_address: ip, skola_id: skolaId || null
+        });
+    } catch (e) { console.error("Audit log error:", e); }
 }
 
 // ── Helpers ───────────────────────────────────────────────────
 function toCyrillic(text) {
     if (!text) return text;
     const digraphs = [
-        ["Lj", "Љ"], ["LJ", "Љ"], ["lj", "љ"], ["Nj", "Њ"], ["NJ", "Њ"], ["nj", "њ"],
-        ["Dž", "Џ"], ["DŽ", "Џ"], ["dž", "џ"], ["Dz", "Ѕ"], ["DZ", "Ѕ"], ["dz", "ѕ"],
-        ["Dj", "Ђ"], ["DJ", "Ђ"], ["dj", "ђ"], ["Sh", "Ш"], ["SH", "Ш"], ["sh", "ш"],
-        ["Š", "Ш"], ["š", "ш"], ["Ch", "Ч"], ["CH", "Ч"], ["ch", "ч"],
-        ["Č", "Ч"], ["č", "ч"], ["Ć", "Ћ"], ["ć", "ћ"], ["Zh", "Ж"], ["ZH", "Ж"], ["zh", "ж"],
+        ["Lj","Љ"],["LJ","Љ"],["lj","љ"],["Nj","Њ"],["NJ","Њ"],["nj","њ"],
+        ["Dž","Џ"],["DŽ","Џ"],["dž","џ"],["Dz","Ѕ"],["DZ","Ѕ"],["dz","ѕ"],
+        ["Dj","Ђ"],["DJ","Ђ"],["dj","ђ"],["Sh","Ш"],["SH","Ш"],["sh","ш"],
+        ["Š","Ш"],["š","ш"],["Ch","Ч"],["CH","Ч"],["ch","ч"],
+        ["Č","Ч"],["č","ч"],["Ć","Ћ"],["ć","ћ"],["Zh","Ж"],["ZH","Ж"],["zh","ж"],
     ];
     const singles = {
-        "A": "А", "B": "Б", "C": "Ц", "D": "Д", "E": "Е", "F": "Ф", "G": "Г", "H": "Х",
-        "I": "И", "J": "Ј", "K": "К", "L": "Л", "M": "М", "N": "Н", "O": "О", "P": "П",
-        "R": "Р", "S": "С", "T": "Т", "U": "У", "V": "В", "Z": "З",
-        "a": "а", "b": "б", "c": "ц", "d": "д", "e": "е", "f": "ф", "g": "г", "h": "х",
-        "i": "и", "j": "ј", "k": "к", "l": "л", "m": "м", "n": "н", "o": "о", "p": "п",
-        "r": "р", "s": "с", "t": "т", "u": "у", "v": "в", "z": "з",
+        "A":"А","B":"Б","C":"Ц","D":"Д","E":"Е","F":"Ф","G":"Г","H":"Х",
+        "I":"И","J":"Ј","K":"К","L":"Л","M":"М","N":"Н","O":"О","P":"П",
+        "R":"Р","S":"С","T":"Т","U":"У","V":"В","Z":"З",
+        "a":"а","b":"б","c":"ц","d":"д","e":"е","f":"ф","g":"г","h":"х",
+        "i":"и","j":"ј","k":"к","l":"л","m":"м","n":"н","o":"о","p":"п",
+        "r":"р","s":"с","t":"т","u":"у","v":"в","z":"з",
     };
     let result = "", i = 0;
     while (i < text.length) {
@@ -89,59 +115,32 @@ function buildAktivnostOpis(aktivnost, naziv) {
     if (!naziv || !naziv.trim()) return aktivnost || "";
     const a = (aktivnost || "").trim();
     const n = naziv.trim();
-
-    if (a.includes("угледног или огледног часа") || a.includes("угледног или огледног"))
-        return `Угледни/огледни час „${n}"`;
-    if (a.includes("радионице за наставнике"))
-        return `Реализација радионице „${n}"`;
-    if (a.includes("стручне књиге, приручника"))
-        return `Приказ стручне публикације „${n}"`;
-    if (a.includes("блога, сајта"))
-        return `Приказ мултимедијалног садржаја „${n}"`;
-    if (a.includes("стручног чланка"))
-        return `Приказ стручног рада „${n}"`;
-    if (a.includes("стручне посете, студијског путовања"))
-        return `Приказ стручне посете „${n}"`;
-    if (a.includes("примене наученог"))
-        return `Приказ примене наученог – „${n}"`;
-    if (a.includes("резултата праћења"))
-        return `Приказ резултата праћења „${n}"`;
-    if (a.includes("законских и подзаконских"))
-        return `Приказ законске регулативе „${n}"`;
-    if (a.includes("појединог облика стручног"))
-        return `Приказ облика стручног усавршавања „${n}"`;
-    if (a.includes("истраживањима"))
-        return `Учешће у истраживању „${n}"`;
-    if (a.includes("пројектима образовно"))
-        return `Учешће у пројекту „${n}"`;
-    if (a.includes("програмима од Националног"))
-        return `Учешће у програму „${n}"`;
-    if (a.includes("програмима огледа"))
-        return `Учешће у програму огледа „${n}"`;
-    if (a.includes("предавања, трибина, округлих"))
-        return `Организовање стручног скупа „${n}"`;
-    if (a.includes("стручне посете, посете изложби"))
-        return `Организовање стручне посете „${n}"`;
-    if (a.includes("обуке (без акредитације)"))
-        return `Организовање обуке „${n}"`;
-    if (a.includes("уџбеника, стручне књиге"))
-        return `Ауторство публикације „${n}"`;
-    if (a.includes("сајта, блога"))
-        return `Ауторство мултимедијалног садржаја „${n}"`;
-    if (a.includes("Рецензија"))
-        return `Рецензија публикације „${n}"`;
-    if (a.includes("стручног рада"))
-        return `Ауторство стручног рада „${n}"`;
-    if (a.includes("Акредитација програма"))
-        return `Акредитација програма „${n}"`;
-    if (a.includes("Акредитација стручног скупа"))
-        return `Акредитација стручног скупа „${n}"`;
-    if (a.includes("волонтерима"))
-        return `Рад са волонтерима/приправницима – „${n}"`;
-    if (a.includes("Припремање ученика"))
-        return `${a} – „${n}"`;
-    if (a.includes("Организација такмичења"))
-        return `${a} – „${n}"`;
+    if (a.includes("угледног или огледног часа") || a.includes("угледног или огледног")) return `Угледни/огледни час „${n}"`;
+    if (a.includes("радионице за наставнике")) return `Реализација радионице „${n}"`;
+    if (a.includes("стручне књиге, приручника")) return `Приказ стручне публикације „${n}"`;
+    if (a.includes("блога, сајта")) return `Приказ мултимедијалног садржаја „${n}"`;
+    if (a.includes("стручног чланка")) return `Приказ стручног рада „${n}"`;
+    if (a.includes("стручне посете, студијског путовања")) return `Приказ стручне посете „${n}"`;
+    if (a.includes("примене наученог")) return `Приказ примене наученог – „${n}"`;
+    if (a.includes("резултата праћења")) return `Приказ резултата праћења „${n}"`;
+    if (a.includes("законских и подзаконских")) return `Приказ законске регулативе „${n}"`;
+    if (a.includes("појединог облика стручног")) return `Приказ облика стручног усавршавања „${n}"`;
+    if (a.includes("истраживањима")) return `Учешће у истраживању „${n}"`;
+    if (a.includes("пројектима образовно")) return `Учешће у пројекту „${n}"`;
+    if (a.includes("програмима од Националног")) return `Учешће у програму „${n}"`;
+    if (a.includes("програмима огледа")) return `Учешће у програму огледа „${n}"`;
+    if (a.includes("предавања, трибина, округлих")) return `Организовање стручног скупа „${n}"`;
+    if (a.includes("стручне посете, посете изложби")) return `Организовање стручне посете „${n}"`;
+    if (a.includes("обуке (без акредитације)")) return `Организовање обуке „${n}"`;
+    if (a.includes("уџбеника, стручне књиге")) return `Ауторство публикације „${n}"`;
+    if (a.includes("сајта, блога")) return `Ауторство мултимедијалног садржаја „${n}"`;
+    if (a.includes("Рецензија")) return `Рецензија публикације „${n}"`;
+    if (a.includes("стручног рада")) return `Ауторство стручног рада „${n}"`;
+    if (a.includes("Акредитација програма")) return `Акредитација програма „${n}"`;
+    if (a.includes("Акредитација стручног скупа")) return `Акредитација стручног скупа „${n}"`;
+    if (a.includes("волонтерима")) return `Рад са волонтерима/приправницима – „${n}"`;
+    if (a.includes("Припремање ученика")) return `${a} – „${n}"`;
+    if (a.includes("Организација такмичења")) return `${a} – „${n}"`;
     return `${a} – „${n}"`;
 }
 
@@ -223,7 +222,7 @@ function buildIzvestajChildren(ime, outside, inside) {
     return [
         centeredBold("ИЗВЕШТАЈ О СТРУЧНОМ УСАВРШАВАЊУ ЗА 2024/2025. ГОДИНУ", 28, false, { after: 200 }),
         normalPara([
-            new TextRun({ text: "Име и презиме запосленог: ", font: TNR, size: 24, language: LANG }),
+            new TextRun({ text: "Ime и презиме запосленог: ", font: TNR, size: 24, language: LANG }),
             new TextRun({ text: imeCyr, font: TNR, size: 24, bold: true, language: LANG }),
         ], { after: 200 }),
         centeredBold("АКТИВНОСТИ СТРУЧНОГ УСАВРШАВАЊА", 24, false, { after: 0 }),
@@ -247,16 +246,12 @@ function buildIzvestajChildren(ime, outside, inside) {
             width: { size: iw.reduce((a, b) => a + b, 0), type: WidthType.DXA }, columnWidths: iw,
             rows: [
                 new TableRow({ children: [
-                    headerCell("Активност", iw[0]),
-                    headerCell("Начин учествовања", iw[1]),
-                    headerCell("Датум реализације", iw[2]),
-                    headerCell("Број бодова", iw[3])
+                    headerCell("Активност", iw[0]), headerCell("Начин учествовања", iw[1]),
+                    headerCell("Датум реализације", iw[2]), headerCell("Број бодова", iw[3])
                 ] }),
                 ...inside.map(r => new TableRow({ children: [
                     cell(buildAktivnostOpis(r.aktivnost, r.naziv), iw[0]),
-                    cell(r.nacin, iw[1]),
-                    cell(r.datum, iw[2]),
-                    cell(r.bodovi, iw[3])
+                    cell(r.nacin, iw[1]), cell(r.datum, iw[2]), cell(r.bodovi, iw[3])
                 ]}))
             ]
         }),
@@ -285,175 +280,217 @@ async function buildCombined(type, entries) {
 
 // ── ROUTES ────────────────────────────────────────────────────
 
-app.get("/", (req, res) => {
-    res.json({ status: "Backend radi sa Supabase bazom" });
-});
+app.get("/", (req, res) => res.json({ status: "Backend radi" }));
 
-// ── Auth rute (bez requireAuth) ───────────────────────────────
-
+// ── LOGIN ─────────────────────────────────────────────────────
 app.post('/login', loginLimiter, async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password)
         return res.status(400).json({ error: "Email i lozinka su obavezni" });
 
     const { data, error } = await supabase
-        .from('korisnici')
-        .select('*, skole(id, naziv, slug)')
-        .ilike('email', email.trim())
-        .single();
+        .from('korisnici').select('*, skole(id, naziv, slug)').ilike('email', email.trim()).single();
 
-    // Ista poruka greške — ne otkriva da li email postoji
     if (error || !data)
         return res.status(401).json({ error: "Pogrešan email ili lozinka" });
 
-    if (data.password_hash) {
-        const ok = await bcrypt.compare(password, data.password_hash);
-        if (!ok) return res.status(401).json({ error: "Pogrešan email ili lozinka" });
+    if (data.suspended) {
+        await auditLog(data.email, 'LOGIN_BLOCKED', 'Pokušaj prijave na suspendovan nalog', req, data.skola_id);
+        return res.status(403).json({ error: "Nalog je suspendovan. Kontaktirajte administratora." });
     }
 
+    if (data.locked_until && new Date(data.locked_until) > new Date()) {
+        const remaining = Math.ceil((new Date(data.locked_until) - new Date()) / 60000);
+        const hours = Math.floor(remaining / 60);
+        const mins = remaining % 60;
+        const timeStr = hours > 0 ? `${hours}h ${mins}min` : `${mins} minuta`;
+        await auditLog(data.email, 'LOGIN_BLOCKED', `Pokušaj prijave na zaključan nalog (još ${timeStr})`, req, data.skola_id);
+        return res.status(423).json({
+            error: `Nalog je privremeno zaključan. Pokušaj ponovo za ${timeStr}.`,
+            locked: true, lockedUntil: data.locked_until
+        });
+    }
+
+    if (data.locked_until && new Date(data.locked_until) <= new Date()) {
+        await supabase.from('korisnici').update({ failed_attempts: 0, locked_until: null }).ilike('email', email.trim());
+    }
+
+    if (data.password_hash) {
+        const ok = await bcrypt.compare(password, data.password_hash);
+        if (!ok) {
+            const newAttempts = (data.failed_attempts || 0) + 1;
+            const shouldLock = newAttempts >= MAX_ATTEMPTS;
+            const lockedUntil = shouldLock ? new Date(Date.now() + LOCKOUT_MS).toISOString() : null;
+
+            await supabase.from('korisnici')
+                .update({ failed_attempts: newAttempts, locked_until: lockedUntil })
+                .ilike('email', email.trim());
+
+            await auditLog(data.email, 'LOGIN_FAIL',
+                shouldLock
+                    ? `Nalog zaključan nakon ${newAttempts} neuspelih pokušaja`
+                    : `Neuspešan pokušaj prijave (${newAttempts}/${MAX_ATTEMPTS})`,
+                req, data.skola_id);
+
+            if (shouldLock) {
+                return res.status(423).json({
+                    error: `Previše neuspelih pokušaja. Nalog je zaključan na ${LOCKOUT_HOURS} sata.`,
+                    locked: true, lockedUntil
+                });
+            }
+
+            const remaining = MAX_ATTEMPTS - newAttempts;
+            const warningMsg = newAttempts >= WARN_AT
+                ? `Pogrešna lozinka. Još ${remaining} ${remaining === 1 ? 'pokušaj' : 'pokušaja'} pre zaključavanja.`
+                : "Pogrešan email ili lozinka";
+            return res.status(401).json({ error: warningMsg, attemptsLeft: remaining });
+        }
+    }
+
+    await supabase.from('korisnici').update({ failed_attempts: 0, locked_until: null }).ilike('email', email.trim());
+
     const payload = {
-        email: data.email,
-        ime: data.ime,
-        admin: data.admin || false,
-        super_admin: data.super_admin || false,
+        email: data.email, ime: data.ime,
+        admin: data.admin || false, super_admin: data.super_admin || false,
         skola_id: data.skola_id || null,
-        skola_naziv: data.skole?.naziv || null,
-        skola_slug: data.skole?.slug || null,
+        skola_naziv: data.skole?.naziv || null, skola_slug: data.skole?.slug || null,
     };
 
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
-
-    res.cookie('token', token, {
-        httpOnly: true,
-        secure: true,
-        sameSite: 'none',
-        maxAge: COOKIE_MAX_AGE
-    });
-
+    res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: COOKIE_MAX_AGE });
+    await auditLog(data.email, 'LOGIN_OK', 'Uspešna prijava', req, data.skola_id);
     res.json({ ok: true, korisnik: payload });
 });
 
-app.post('/logout', (req, res) => {
+app.post('/logout', requireAuth, async (req, res) => {
+    await auditLog(req.korisnik.email, 'LOGOUT', 'Odjava', req, req.korisnik.skola_id);
     res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
     res.json({ ok: true });
 });
 
-app.get('/me', requireAuth, (req, res) => {
-    res.json({ korisnik: req.korisnik });
-});
+app.get('/me', requireAuth, (req, res) => res.json({ korisnik: req.korisnik }));
 
-// ── Promena lozinke ───────────────────────────────────────────
-
+// ── PROMENA LOZINKE ───────────────────────────────────────────
 app.post('/change-password', requireAuth, async (req, res) => {
     const { oldPassword, newPassword } = req.body;
-    if (!oldPassword || !newPassword)
-        return res.status(400).json({ error: "Sva polja su obavezna" });
-    if (newPassword.length < 8)
-        return res.status(400).json({ error: "Lozinka mora imati najmanje 8 karaktera" });
+    if (!oldPassword || !newPassword) return res.status(400).json({ error: "Sva polja su obavezna" });
+    if (newPassword.length < 8) return res.status(400).json({ error: "Lozinka mora imati najmanje 8 karaktera" });
 
-    const { data } = await supabase
-        .from('korisnici')
-        .select('password_hash')
-        .ilike('email', req.korisnik.email)
-        .single();
-
+    const { data } = await supabase.from('korisnici').select('password_hash').ilike('email', req.korisnik.email).single();
     if (!data) return res.status(404).json({ error: "Korisnik nije pronađen" });
 
     if (data.password_hash) {
         const ok = await bcrypt.compare(oldPassword, data.password_hash);
-        if (!ok) return res.status(401).json({ error: "Stara lozinka nije ispravna" });
+        if (!ok) {
+            await auditLog(req.korisnik.email, 'PASSWORD_CHANGE_FAIL', 'Neuspešna promena lozinke — pogrešna stara lozinka', req, req.korisnik.skola_id);
+            return res.status(401).json({ error: "Stara lozinka nije ispravna" });
+        }
     }
 
     const hash = await bcrypt.hash(newPassword, 12);
     await supabase.from('korisnici').update({ password_hash: hash }).ilike('email', req.korisnik.email);
+    await auditLog(req.korisnik.email, 'PASSWORD_CHANGE', 'Korisnik promenio svoju lozinku', req, req.korisnik.skola_id);
     res.json({ success: true });
 });
 
-// ── Admin reset lozinke ───────────────────────────────────────
-
-app.post('/admin/reset-password', requireAuth, async (req, res) => {
-    if (!req.korisnik.admin && !req.korisnik.super_admin)
-        return res.status(403).json({ error: "Nije dozvoljeno" });
-
-    const masterKey = req.headers['x-master-key'];
-    if (!masterKey || masterKey !== process.env.DELETE_PASSWORD)
-        return res.status(403).json({ error: "Pogrešan master ključ" });
-
+// ── RESET LOZINKE (samo super_admin + master key) ─────────────
+app.post('/admin/reset-password', requireAuth, requireSuperAdmin, requireMasterKey, async (req, res) => {
     const { email, newPassword } = req.body;
-    if (!email || !newPassword)
-        return res.status(400).json({ error: "Nedostaju podaci" });
+    if (!email || !newPassword) return res.status(400).json({ error: "Nedostaju podaci" });
+    if (newPassword.length < 8) return res.status(400).json({ error: "Lozinka mora imati najmanje 8 karaktera" });
 
     const hash = await bcrypt.hash(newPassword, 12);
-    const { error } = await supabase
-        .from('korisnici').update({ password_hash: hash }).ilike('email', email);
-
+    const { error } = await supabase.from('korisnici').update({ password_hash: hash }).ilike('email', email);
     if (error) return res.status(500).json({ error: "Greška pri resetovanju" });
+
+    await auditLog(req.korisnik.email, 'PASSWORD_RESET', `Super admin resetovao lozinku za: ${email}`, req, req.korisnik.skola_id);
     res.json({ success: true });
 });
 
-// ── Zaštićene rute ────────────────────────────────────────────
+// ── UNLOCK (samo super_admin + master key) ────────────────────
+app.post('/admin/unlock', requireAuth, requireSuperAdmin, requireMasterKey, async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email je obavezan" });
 
-// Lista skola (za superadmin izbor)
+    const { error } = await supabase.from('korisnici').update({ failed_attempts: 0, locked_until: null }).ilike('email', email);
+    if (error) return res.status(500).json({ error: "Greška pri otključavanju" });
+
+    await auditLog(req.korisnik.email, 'ACCOUNT_UNLOCKED', `Super admin otključao nalog: ${email}`, req, req.korisnik.skola_id);
+    res.json({ success: true });
+});
+
+// ── SUSPEND (samo super_admin + master key) ───────────────────
+app.post('/admin/suspend', requireAuth, requireSuperAdmin, requireMasterKey, async (req, res) => {
+    const { email, reason } = req.body;
+    if (!email) return res.status(400).json({ error: "Email je obavezan" });
+
+    const { error } = await supabase.from('korisnici').update({ suspended: true, suspend_reason: reason || "Bez razloga" }).ilike('email', email);
+    if (error) return res.status(500).json({ error: "Greška pri suspendovanju" });
+
+    await auditLog(req.korisnik.email, 'ACCOUNT_SUSPENDED', `Super admin suspendovao nalog: ${email}. Razlog: ${reason || "Bez razloga"}`, req, req.korisnik.skola_id);
+    res.json({ success: true });
+});
+
+// ── UNSUSPEND (samo super_admin + master key) ─────────────────
+app.post('/admin/unsuspend', requireAuth, requireSuperAdmin, requireMasterKey, async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email je obavezan" });
+
+    const { error } = await supabase.from('korisnici').update({ suspended: false, suspend_reason: null }).ilike('email', email);
+    if (error) return res.status(500).json({ error: "Greška pri aktiviranju" });
+
+    await auditLog(req.korisnik.email, 'ACCOUNT_UNSUSPENDED', `Super admin aktivirao nalog: ${email}`, req, req.korisnik.skola_id);
+    res.json({ success: true });
+});
+
+// ── AUDIT LOG (samo super_admin) ──────────────────────────────
+app.get('/admin/audit-log', requireAuth, requireSuperAdmin, async (req, res) => {
+    const { skola_id, limit = 200 } = req.query;
+    let query = supabase.from('audit_log').select('*').order('created_at', { ascending: false }).limit(Number(limit));
+    if (skola_id) query = query.eq('skola_id', skola_id);
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: "Greška pri učitavanju loga" });
+    res.json(data);
+});
+
+// ── LISTA SKOLA ───────────────────────────────────────────────
 app.get('/skole', requireAuth, async (req, res) => {
-    const { data, error } = await supabase
-        .from('skole')
-        .select('id, naziv, slug')
-        .order('naziv');
+    const { data, error } = await supabase.from('skole').select('id, naziv, slug').order('naziv');
     if (error) return res.status(500).json({ error: "Greska" });
     res.json(data);
 });
 
-// Sacuvaj plan ili izvestaj
+// ── SUBMIT ────────────────────────────────────────────────────
 app.post('/submit/:type', requireAuth, async (req, res) => {
     const { email, ime, outside, inside, skola_id } = req.body;
     if (!email) return res.status(400).json({ error: "Email je obavezan" });
 
     const table = req.params.type === 'izvestaj' ? 'izvestaji' : 'planovi';
+    const { error } = await supabase.from(table).upsert({
+        email, ime, outside, inside, skola_id: skola_id || null, submitted_at: new Date().toISOString()
+    }, { onConflict: 'email' });
 
-    const { error } = await supabase
-        .from(table)
-        .upsert({
-            email,
-            ime,
-            outside,
-            inside,
-            skola_id: skola_id || null,
-            submitted_at: new Date().toISOString()
-        }, { onConflict: 'email' });
+    if (error) { console.error("Supabase upsert error:", error); return res.status(500).json({ error: "Greska pri cuvanju" }); }
 
-    if (error) {
-        console.error("Supabase upsert error:", error);
-        return res.status(500).json({ error: "Greska pri cuvanju" });
-    }
-
+    await auditLog(email, 'SUBMIT', `Predao ${req.params.type === 'izvestaj' ? 'izveštaj' : 'plan'} za ${ime}`, req, skola_id);
     res.json({ success: true });
 });
 
-// Ucitaj sacuvani plan/izvestaj za korisnika
+// ── MY DATA ───────────────────────────────────────────────────
 app.get('/my/:type/:email', requireAuth, async (req, res) => {
     const table = req.params.type === 'izvestaj' ? 'izvestaji' : 'planovi';
-
-    const { data, error } = await supabase
-        .from(table)
-        .select('*')
-        .eq('email', req.params.email)
-        .single();
-
+    const { data, error } = await supabase.from(table).select('*').eq('email', req.params.email).single();
     if (error || !data) return res.status(404).json({ error: "Nema sačuvanih podataka" });
-
     res.json(data);
 });
 
-// Admin — lista svih korisnika sa statusom
+// ── ADMIN USERS ───────────────────────────────────────────────
 app.get('/admin/users', requireAuth, async (req, res) => {
     const { skola_id } = req.query;
     if (!skola_id) return res.status(400).json({ error: "skola_id je obavezan" });
 
     const { data: korisnici, error } = await supabase
-        .from('korisnici')
-        .select('*')
-        .eq('skola_id', skola_id)
-        .eq('super_admin', false);
+        .from('korisnici').select('*').eq('skola_id', skola_id).eq('super_admin', false);
     if (error) return res.status(500).json({ error: "Greska" });
 
     const { data: planovi } = await supabase.from('planovi').select('email, submitted_at').eq('skola_id', skola_id);
@@ -463,65 +500,36 @@ app.get('/admin/users', requireAuth, async (req, res) => {
     const izvestajiMap = Object.fromEntries((izvestaji || []).map(i => [i.email, i.submitted_at]));
 
     res.json(korisnici.map(k => ({
-        email: k.email,
-        ime: k.ime,
-        admin: k.admin || false,
-        super_admin: k.super_admin || false,
-        planSubmitted: !!planoviMap[k.email],
-        planSubmittedAt: planoviMap[k.email] || null,
-        izvestajSubmitted: !!izvestajiMap[k.email],
-        izvestajSubmittedAt: izvestajiMap[k.email] || null,
+        email: k.email, ime: k.ime,
+        admin: k.admin || false, super_admin: k.super_admin || false,
+        planSubmitted: !!planoviMap[k.email], planSubmittedAt: planoviMap[k.email] || null,
+        izvestajSubmitted: !!izvestajiMap[k.email], izvestajSubmittedAt: izvestajiMap[k.email] || null,
+        failed_attempts: k.failed_attempts || 0,
+        locked_until: k.locked_until || null,
+        suspended: k.suspended || false,
+        suspend_reason: k.suspend_reason || null,
     })));
 });
 
-// Admin — ucitaj submission za jednog korisnika
+// ── ADMIN SUBMISSION ──────────────────────────────────────────
 app.get('/admin/submission/:type/:email', requireAuth, async (req, res) => {
     const table = req.params.type === 'izvestaj' ? 'izvestaji' : 'planovi';
-
-    const { data, error } = await supabase
-        .from(table)
-        .select('*')
-        .eq('email', req.params.email)
-        .single();
-
+    const { data, error } = await supabase.from(table).select('*').eq('email', req.params.email).single();
     if (error || !data) return res.status(404).json({ error: "Нема предате документације" });
-
     res.json(data);
 });
 
-// Admin — obrisi submission
-app.delete('/admin/submission/:type/:email', requireAuth, async (req, res) => {
-    if (!req.korisnik.admin && !req.korisnik.super_admin)
-        return res.status(403).json({ error: "Nije dozvoljeno" });
-
-    const masterKey = req.headers['x-master-key'];
-    const deletePassword = process.env.DELETE_PASSWORD;
-
-    if (!deletePassword) {
-        console.error("DELETE_PASSWORD env variable nije postavljena!");
-        return res.status(500).json({ error: "Лозинка за брисање није конфигурисана на серверу." });
-    }
-
-    if (!masterKey || masterKey !== deletePassword) {
-        return res.status(403).json({ error: "Погрешна лозинка. Брисање није дозвољено." });
-    }
-
+// ── BRISANJE (samo super_admin + master key) ──────────────────
+app.delete('/admin/submission/:type/:email', requireAuth, requireSuperAdmin, requireMasterKey, async (req, res) => {
     const table = req.params.type === 'izvestaj' ? 'izvestaji' : 'planovi';
+    const { error } = await supabase.from(table).delete().eq('email', req.params.email);
+    if (error) { console.error("Supabase delete error:", error); return res.status(500).json({ error: "Грешка при брисању из базе." }); }
 
-    const { error } = await supabase
-        .from(table)
-        .delete()
-        .eq('email', req.params.email);
-
-    if (error) {
-        console.error("Supabase delete error:", error);
-        return res.status(500).json({ error: "Грешка при брисању из базе." });
-    }
-
+    await auditLog(req.korisnik.email, 'DELETE', `Super admin obrisao ${req.params.type} za: ${req.params.email}`, req, req.korisnik.skola_id);
     res.json({ success: true });
 });
 
-// Generisi jedan docx
+// ── GENERATE DOCX ─────────────────────────────────────────────
 app.post('/generate/:type', requireAuth, async (req, res) => {
     const { ime, outside, inside } = req.body;
     const type = req.params.type;
@@ -538,7 +546,7 @@ app.post('/generate/:type', requireAuth, async (req, res) => {
     }
 });
 
-// Generisi sve docx-ove u jednom fajlu
+// ── GENERATE ALL ──────────────────────────────────────────────
 app.get('/generate-all/:type', requireAuth, async (req, res) => {
     const type = req.params.type;
     const table = type === 'izvestaj' ? 'izvestaji' : 'planovi';
@@ -551,7 +559,7 @@ app.get('/generate-all/:type', requireAuth, async (req, res) => {
     try {
         const buffer = await buildCombined(type, data);
         const prefix = type === 'izvestaj' ? 'Svi_izvestaji' : 'Svi_planovi';
-        res.setHeader('Content-Disposition', `attachment; filename="${prefix}_strucnog_usavrsavanja.docx"; filename*=UTF-8''${prefix}_strucnog_usavrsavanja.docx`);
+        res.setHeader('Content-Disposition', `attachment; filename="${prefix}_strucnog_usavrsavanja.docx"`);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         res.send(buffer);
     } catch (err) {
