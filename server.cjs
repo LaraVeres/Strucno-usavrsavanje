@@ -174,7 +174,7 @@ function normalPara(runs, spacing = {}) { return new Paragraph({ spacing, childr
 
 function buildPlanChildren(ime, outside, inside) {
     const ow = [3539, 1559, 1985, 1979];
-    const iw = [3256, 2538, 1412];
+    const iw = [4094, 3192, 1776];
     const imeCyr = toCyrillic(ime);
     return [
         centeredBold("ПЛАН СТРУЧНОГ УСАВРШАВАЊА ЗА 2026/2027. ГОДИНУ", 28, false, { after: 200 }),
@@ -217,7 +217,7 @@ function buildPlanChildren(ime, outside, inside) {
 
 function buildIzvestajChildren(ime, outside, inside) {
     const ow = [3539, 1559, 1985, 1979];
-    const iw = [3200, 2000, 1600, 1062];
+    const iw = [3688, 2305, 1845, 1224];
     const imeCyr = toCyrillic(ime);
     return [
         centeredBold("ИЗВЕШТАЈ О СТРУЧНОМ УСАВРШАВАЊУ ЗА 2025/2026. ГОДИНУ", 28, false, { after: 200 }),
