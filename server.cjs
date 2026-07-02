@@ -177,7 +177,7 @@ function buildPlanChildren(ime, outside, inside) {
     const iw = [3256, 2538, 1412];
     const imeCyr = toCyrillic(ime);
     return [
-        centeredBold("ПЛАН СТРУЧНОГ УСАВРШАВАЊА ЗА 2025/2026. ГОДИНУ", 28, false, { after: 200 }),
+        centeredBold("ПЛАН СТРУЧНОГ УСАВРШАВАЊА ЗА 2026/2027. ГОДИНУ", 28, false, { after: 200 }),
         normalPara([
             new TextRun({ text: "Име и презиме запосленог: ", font: TNR, size: 24, language: LANG }),
             new TextRun({ text: imeCyr, font: TNR, size: 24, bold: true, language: LANG }),
@@ -220,9 +220,9 @@ function buildIzvestajChildren(ime, outside, inside) {
     const iw = [3200, 2000, 1600, 1062];
     const imeCyr = toCyrillic(ime);
     return [
-        centeredBold("ИЗВЕШТАЈ О СТРУЧНОМ УСАВРШАВАЊУ ЗА 2024/2025. ГОДИНУ", 28, false, { after: 200 }),
+        centeredBold("ИЗВЕШТАЈ О СТРУЧНОМ УСАВРШАВАЊУ ЗА 2025/2026. ГОДИНУ", 28, false, { after: 200 }),
         normalPara([
-            new TextRun({ text: "Ime и презиме запосленог: ", font: TNR, size: 24, language: LANG }),
+            new TextRun({ text: "Име и презиме запосленог: ", font: TNR, size: 24, language: LANG }),
             new TextRun({ text: imeCyr, font: TNR, size: 24, bold: true, language: LANG }),
         ], { after: 200 }),
         centeredBold("АКТИВНОСТИ СТРУЧНОГ УСАВРШАВАЊА", 24, false, { after: 0 }),
