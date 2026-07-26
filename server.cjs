@@ -53,7 +53,7 @@ function requireAuth(req, res, next) {
         req.korisnik = jwt.verify(token, JWT_SECRET);
         next();
     } catch {
-        res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
+        res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none', partitioned: true });
         return res.status(401).json({ error: "Sesija je istekla. Prijavi se ponovo." });
     }
 }
