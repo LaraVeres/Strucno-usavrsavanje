@@ -357,7 +357,7 @@ app.post('/login', loginLimiter, async (req, res) => {
     };
 
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
-    res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', maxAge: COOKIE_MAX_AGE });
+    res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none', partitioned: true, maxAge: COOKIE_MAX_AGE });
     await auditLog(data.email, 'LOGIN_OK', 'Uspešna prijava', req, data.skola_id);
     res.json({ ok: true, korisnik: payload });
 });
