@@ -364,7 +364,7 @@ app.post('/login', loginLimiter, async (req, res) => {
 
 app.post('/logout', requireAuth, async (req, res) => {
     await auditLog(req.korisnik.email, 'LOGOUT', 'Odjava', req, req.korisnik.skola_id);
-    res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
+    res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none', partitioned: true });
     res.json({ ok: true });
 });
 
