@@ -28,7 +28,7 @@ const supabase = createClient(
 // ── JWT ───────────────────────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES = '6h';
-const COOKIE_MAX_AGE = 20 * 60 * 1000;
+const COOKIE_MAX_AGE = 1000 * 60 * 1000;
 
 // ── Lockout config ────────────────────────────────────────────
 const MAX_ATTEMPTS = 7;
